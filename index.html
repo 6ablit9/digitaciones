@@ -124,6 +124,10 @@ input[type=range]{accent-color:var(--accent);width:130px}
 
 
 .reserve{visibility:hidden}
+
+.hiddenbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:36px;font-size:13px}
+.hb-label{color:var(--muted)}
+.chip{font:inherit;font-size:13px;border:1px solid var(--accent);background:var(--accent-soft);color:var(--ink);border-radius:999px;padding:5px 12px;cursor:pointer}
 /* Espacios fijos para textos que cambian: evita que los cuadros salten */
 .rname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.15em}
 .rsub{min-height:2.9em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -267,6 +271,7 @@ input[type=range]{accent-color:var(--accent);width:130px}
       </div>
       <p class="note" id="midiMsg">Arrastra un archivo .mid aquí o usa “Subir MIDI…”. Cada pista se muestra en su propio diapasón, en paralelo.</p>
     </div>
+    <div class="hiddenbar" id="hiddenBar"></div>
     <div class="tracks" id="tracks"></div>
   </section>
 </div>
@@ -1150,7 +1155,7 @@ function fingerTrack(tr){
 function loadSong(song){
   mPause();
   M.song=song; M.pos=0; song.dur=0;
-  song.tracks.forEach(tr=>{tr.inst=tr.inst||guessInst(tr);tr.tr=tr.tr||0;tr.mute=false;tr.solo=false;tr.vol=tr.vol==null?1:tr.vol;fingerTrack(tr);tr.notes.forEach(n=>{song.dur=Math.max(song.dur,n.t+n.d);});});
+  song.tracks.forEach(tr=>{tr.inst=tr.inst||guessInst(tr);tr.tr=tr.tr||0;tr.mute=false;tr.solo=false;tr.hidden=false;if(tr.inst==='hide')tr.inst=null;tr.vol=tr.vol==null?1:tr.vol;fingerTrack(tr);tr.notes.forEach(n=>{song.dur=Math.max(song.dur,n.t+n.d);});});
   $('songTitle').textContent=song.title;
   $('seek').max=song.dur.toFixed(2); $('seek').value=0;
   buildTrackDom(); updateSpeedLabel(); updateTime(0);
@@ -1165,7 +1170,7 @@ function buildTrackDom(){
     el.innerHTML=`<div class="trkhead">
       <div class="trkname"><span></span><small></small></div>
       <label class="sr" for="ti${i}">Instrumento de la pista ${i+1}</label>
-      <select id="ti${i}" data-k="inst">${instOptions(true)}</select>
+      <select id="ti${i}" data-k="inst">${instOptions(false)}</select>
       <label class="sr" for="tt${i}">Transportar pista ${i+1}</label>
       <select id="tt${i}" data-k="tr"><option value="-2">−2 octavas</option><option value="-1">−1 octava</option><option value="0">Altura original</option><option value="1">+1 octava</option><option value="2">+2 octavas</option></select>
       <label class="sr" for="tw${i}">Vista de la pista ${i+1}</label>
@@ -1173,6 +1178,7 @@ function buildTrackDom(){
       <label class="vol" for="tv${i}">Volumen <input type="range" id="tv${i}" data-k="vol" min="0" max="150" step="5" value="${Math.round(tr.vol*100)}"><output>${Math.round(tr.vol*100)}%</output></label>
       <button type="button" class="btn ghost small" data-k="mute" aria-pressed="false">Silenciar</button>
       <button type="button" class="btn ghost small" data-k="solo" aria-pressed="false">Solo</button>
+      <button type="button" class="btn ghost small" data-k="hide" title="Ocultar esta pista (sigue sonando)">Ocultar</button>
     </div><p class="now"></p><canvas></canvas>`;
     tr.el=el; tr.cv=el.querySelector('canvas'); tr.nowEl=el.querySelector('.now'); tr.nowTxt=null;
     el.querySelector('[data-k=inst]').value=tr.inst;
@@ -1182,6 +1188,7 @@ function buildTrackDom(){
     el.querySelector('[data-k=inst]').onchange=e=>{tr.inst=e.target.value;fingerTrack(tr);renderTrackHeads();drawAll(songPos());};
     el.querySelector('[data-k=tr]').onchange=e=>{tr.tr=+e.target.value;fingerTrack(tr);renderTrackHeads();drawAll(songPos());};
     el.querySelector('[data-k=vol]').oninput=e=>{tr.vol=+e.target.value/100;e.target.nextElementSibling.textContent=e.target.value+'%';if(tr.g&&ctx)tr.g.gain.setTargetAtTime(tr.vol,ctx.currentTime,0.02);};
+    el.querySelector('[data-k=hide]').onclick=()=>{tr.hidden=true;renderTrackHeads();};
     el.querySelector('[data-k=mute]').onclick=e=>{tr.mute=!tr.mute;e.target.setAttribute('aria-pressed',tr.mute);};
     el.querySelector('[data-k=solo]').onclick=e=>{tr.solo=!tr.solo;e.target.setAttribute('aria-pressed',tr.solo);};
     box.appendChild(el);
@@ -1193,10 +1200,19 @@ function renderTrackHeads(){
     const h=tr.el.querySelector('.trkname'), ins=INS[tr.inst];
     h.firstChild.textContent=tr.name;
     h.lastChild.innerHTML=`${tr.notes.length} notas · ${rangeText(tr)}`+(ins&&tr.out?` · <span class="warn">${tr.out} fuera del rango de ${ins.label.toLowerCase()}: prueba transportar</span>`:'');
-    tr.el.classList.toggle('off',tr.inst==='hide');
+    tr.el.classList.toggle('hidden',!!tr.hidden);
     tr.nowTxt=null;
   });
+  renderHiddenBar();
 }
+function renderHiddenBar(){
+  const bar=$('hiddenBar'), hid=M.song.tracks.map((t,i)=>[t,i]).filter(([t])=>t.hidden);
+  if(!hid.length){bar.innerHTML='<span class="hb-label">Todas las pistas están a la vista. Usa “Ocultar” en una pista para sacarla de la pantalla.</span>';return;}
+  bar.innerHTML='<span class="hb-label">Pistas ocultas (siguen sonando):</span>'+hid.map(([t,i])=>`<button type="button" class="chip" data-show="${i}" title="Volver a mostrar">👁 ${t.name.replace(/[<>&]/g,'')}</button>`).join('')+(hid.length>1?'<button type="button" class="chip" data-show="all">Mostrar todas</button>':'');
+}
+$('hiddenBar').addEventListener('click',e=>{const b=e.target.closest('[data-show]');if(!b||!M.song)return;
+  if(b.dataset.show==='all')M.song.tracks.forEach(t=>t.hidden=false);else M.song.tracks[+b.dataset.show].hidden=false;
+  renderTrackHeads();drawAll(songPos());});
 
 function lowerBound(ns,t){let lo=0,hi=ns.length;while(lo<hi){const m=(lo+hi)>>1;if(ns[m].t<t)lo=m+1;else hi=m;}return lo;}
 function songPos(){return M.playing?Math.max(0,M.p0+(ctx.currentTime-M.t0)*M.speed):M.pos;}
@@ -1279,7 +1295,7 @@ function frame(){
 function drawAll(p){
   if(!M.song||st.mode!=='midi') return;
   const C=colors();
-  M.song.tracks.forEach(tr=>{if(tr.inst!=='hide') drawTrack(tr,p,C); else updateNow(tr,[]);});
+  M.song.tracks.forEach(tr=>{if(!tr.hidden) drawTrack(tr,p,C);});
 }
 function nowText(tr,act,html){
   if(!act.length) return html?'<span style="color:var(--muted)">—</span>':'—';
@@ -1460,7 +1476,7 @@ function pickMime(){
 const VW=1280, HEAD=92;
 function trackH(tr){const v=tr.view||'inst';return (v==='score'?0:156)+(v==='both'?10:0)+(v==='inst'?0:150);}
 function composeFrame(p){
-  const cv=R.canvas, g=cv.getContext('2d'), C=colors(), trs=M.song.tracks.filter(t=>t.inst!=='hide');
+  const cv=R.canvas, g=cv.getContext('2d'), C=colors(), trs=M.song.tracks.filter(t=>!t.hidden);
   g.fillStyle=C.bg; g.fillRect(0,0,cv.width,cv.height);
   g.fillStyle=C.ink; g.font='400 30px "Young Serif", Georgia, serif'; g.textAlign='left'; g.fillText(M.song.title,20,44);
   g.font='600 15px '+FONT; g.fillStyle=C.muted; g.textAlign='right';
@@ -1485,7 +1501,7 @@ async function getDownloads(){
 }
 function startRec(){
   if(!M.song) return;
-  const trs=M.song.tracks.filter(t=>t.inst!=='hide');
+  const trs=M.song.tracks.filter(t=>!t.hidden);
   if(!trs.length){$('midiMsg').innerHTML='<span class="err">No hay pistas visibles para grabar. Asigna un instrumento a alguna pista.</span>';return;}
   const mm=pickMime();
   if(!mm||!HTMLCanvasElement.prototype.captureStream){$('midiMsg').innerHTML='<span class="err">Este navegador no permite grabar video. Prueba con Chrome o Edge en el computador.</span>';return;}
